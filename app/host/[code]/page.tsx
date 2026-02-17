@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import QRCode from "qrcode";
 import { makePusherClient } from "@/lib/pusher-client";
 
-type Player = { id: string; name: string; avatarDataUrl: string | null; joinedAt: number };
+type Player = { id: string; name: string; avatarDataUrl?: string | null; joinedAt: number };
 
 type RoundPayload = {
     roundId: string;
@@ -35,8 +35,18 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
     // timer
     const [now, setNow] = useState(() => Date.now());
 
-    // audio (host plays sequence)
+    // audio (hidden) + visualizer
     const audioRef = useRef<HTMLAudioElement | null>(null);
+    const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+    const audioCtxRef = useRef<AudioContext | null>(null);
+    const analyserRef = useRef<AnalyserNode | null>(null);
+    const srcNodeRef = useRef<MediaElementAudioSourceNode | null>(null);
+    const rafRef = useRef<number | null>(null);
+    const isDrawingRef = useRef(false);
+
+    // ✅ lettre affichée derrière le spectre
+    const [currentSegment, setCurrentSegment] = useState<"—" | "Q" | "A" | "B" | "C" | "D">("—");
 
     // qr
     const qrCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -65,7 +75,121 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
         QRCode.toCanvas(qrCanvasRef.current, joinFullUrl, { width: 220, margin: 1 }).catch(() => {});
     }, [joinFullUrl]);
 
-    // initial load players (one-time fetch, then realtime adds)
+    // init visualizer (AudioContext + analyser)
+    function ensureAudioGraph() {
+        const audioEl = audioRef.current;
+        if (!audioEl) return;
+
+        if (!audioCtxRef.current) {
+            const Ctx = window.AudioContext || (window as any).webkitAudioContext;
+            audioCtxRef.current = new Ctx();
+        }
+        const ctx = audioCtxRef.current;
+
+        if (ctx.state === "suspended") {
+            // iOS/Safari: doit être réveillé sur geste utilisateur (bouton "Lancer une manche")
+            ctx.resume().catch(() => {});
+        }
+
+        if (!analyserRef.current) {
+            const analyser = ctx.createAnalyser();
+            analyser.fftSize = 2048;
+            analyser.smoothingTimeConstant = 0.85;
+            analyserRef.current = analyser;
+        }
+
+        // MediaElementAudioSourceNode ne peut être créé qu’une fois par <audio>
+        if (!srcNodeRef.current) {
+            srcNodeRef.current = ctx.createMediaElementSource(audioEl);
+            srcNodeRef.current.connect(analyserRef.current!);
+            analyserRef.current!.connect(ctx.destination);
+        }
+    }
+
+    function stopDrawing() {
+        isDrawingRef.current = false;
+        if (rafRef.current) cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const ctx2d = canvas.getContext("2d");
+        if (!ctx2d) return;
+
+        const rect = canvas.getBoundingClientRect();
+        ctx2d.clearRect(0, 0, rect.width, rect.height);
+    }
+
+    function startDrawing() {
+        const canvas = canvasRef.current;
+        const analyser = analyserRef.current;
+        if (!canvas || !analyser) return;
+
+        const ctx2d = canvas.getContext("2d");
+        if (!ctx2d) return;
+
+        const resize = () => {
+            const dpr = window.devicePixelRatio || 1;
+            const rect = canvas.getBoundingClientRect();
+            canvas.width = Math.floor(rect.width * dpr);
+            canvas.height = Math.floor(rect.height * dpr);
+            ctx2d.setTransform(dpr, 0, 0, dpr, 0, 0);
+        };
+        resize();
+
+        const onResize = () => resize();
+        window.addEventListener("resize", onResize);
+
+        const bufferLength = analyser.frequencyBinCount;
+        const dataArray = new Uint8Array(bufferLength);
+
+        isDrawingRef.current = true;
+
+        const draw = () => {
+            if (!isDrawingRef.current) {
+                window.removeEventListener("resize", onResize);
+                return;
+            }
+
+            analyser.getByteFrequencyData(dataArray);
+
+            const w = canvas.getBoundingClientRect().width;
+            const h = canvas.getBoundingClientRect().height;
+
+            ctx2d.clearRect(0, 0, w, h);
+
+            // base line
+            ctx2d.fillStyle = "rgba(255,255,255,0.06)";
+            ctx2d.fillRect(0, h - 2, w, 2);
+
+            // bars
+            const barCount = 64;
+            const step = Math.floor(bufferLength / barCount);
+            const gap = 3;
+            const barW = (w - gap * (barCount - 1)) / barCount;
+
+            for (let i = 0; i < barCount; i++) {
+                const v = dataArray[i * step] / 255;
+                const scaled = Math.pow(v, 1.6);
+
+                const barH = Math.max(6, scaled * (h - 12));
+                const x = i * (barW + gap);
+                const y = h - barH;
+
+                ctx2d.fillStyle = "rgba(91,61,245,0.85)";
+                ctx2d.fillRect(x, y, barW, barH);
+
+                ctx2d.fillStyle = "rgba(242,242,242,0.35)";
+                ctx2d.fillRect(x, y, barW, 2);
+            }
+
+            rafRef.current = requestAnimationFrame(draw);
+        };
+
+        rafRef.current = requestAnimationFrame(draw);
+    }
+
+    // initial load players
     async function refreshPlayers() {
         if (!code) return;
         try {
@@ -102,8 +226,7 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
             setAnswers({});
             setEnded(null);
             setError(null);
-
-            // Start audio sequence on host
+            setCurrentSegment("—");
             playSequence(payload.questionUrl, payload.optionUrls).catch(() => {});
         });
 
@@ -116,6 +239,7 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
 
         channel.bind("round-ended", (payload: any) => {
             setEnded(payload);
+            setCurrentSegment("—");
         });
 
         return () => {
@@ -126,27 +250,44 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
     }, [code]);
 
     // audio helpers
-    async function playUrl(url: string) {
+    async function playUrl(url: string, segment: "Q" | "A" | "B" | "C" | "D") {
         const el = audioRef.current;
         if (!el) return;
 
+        ensureAudioGraph();
+
+        setCurrentSegment(segment);
+
         el.src = url;
         el.load();
+
+        const started = new Promise<void>((resolve) => {
+            const onPlay = () => resolve();
+            el.addEventListener("playing", onPlay, { once: true });
+        });
+
         await el.play();
+        await started;
+
+        startDrawing();
 
         await new Promise<void>((resolve) => {
             el.onended = () => resolve();
         });
+
+        stopDrawing();
+        setCurrentSegment("—");
     }
 
     async function playSequence(questionUrl: string, optionUrls: string[]) {
         // question
-        await playUrl(questionUrl);
+        await playUrl(questionUrl, "Q");
 
         // A/B/C/D each preceded by 3 seconds gap
-        for (const url of optionUrls) {
+        const labels: Array<"A" | "B" | "C" | "D"> = ["A", "B", "C", "D"];
+        for (let i = 0; i < optionUrls.length; i++) {
             await wait(3000);
-            await playUrl(url);
+            await playUrl(optionUrls[i], labels[i] ?? "A");
         }
     }
 
@@ -156,15 +297,18 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
         setError(null);
 
         try {
+            // wake audio context on user gesture
+            ensureAudioGraph();
+
             const res = await fetch(`/api/room/${code}/round/start`, { method: "POST" });
             const data = await res.json();
             if (!res.ok) throw new Error(data?.error ?? "Erreur start round");
-            // We also set locally in case pusher is delayed
+
             setRound(data);
             setAnswers({});
             setEnded(null);
+            setCurrentSegment("—");
 
-            // Launch audio sequence right away (also will run on round-started event)
             playSequence(data.questionUrl, data.optionUrls).catch(() => {});
         } catch (e) {
             setError(e instanceof Error ? e.message : "Erreur inconnue");
@@ -183,6 +327,7 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
             const data = await res.json();
             if (!res.ok) throw new Error(data?.error ?? "Erreur end round");
             setEnded(data);
+            setCurrentSegment("—");
         } catch (e) {
             setError(e instanceof Error ? e.message : "Erreur inconnue");
         }
@@ -193,10 +338,24 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
         if (!round) return;
         if (ended) return;
         if (now < round.endsAt) return;
-
         endRound(round.roundId).catch(() => {});
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [now, round, ended]);
+
+    // cleanup on unmount
+    useEffect(() => {
+        return () => {
+            stopDrawing();
+            const a = audioRef.current;
+            if (a) {
+                a.pause();
+                a.src = "";
+            }
+            const ctx = audioCtxRef.current;
+            if (ctx) ctx.close().catch(() => {});
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     const phase = useMemo(() => {
         if (!round) return "IDLE";
@@ -220,9 +379,9 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
     if (!code) return <main className="min-h-screen bg-black text-white p-8">Chargement…</main>;
 
     return (
-        <main className="min-h-screen tekno-grid tekno-noise text-[#F2F2F2] p-8">
+        <main className="min-h-screen bg-[#0B0B10] text-white p-8">
             {/* TOP BAR */}
-            <div className="flex items-center justify-between border border-white/15 bg-[#0E0E11]/60 px-6 py-4">
+            <div className="flex items-center justify-between border border-white/10 bg-[#0E0E11]/60 px-6 py-4">
                 <div className="text-xs tracking-[0.3em] text-white/60">HOST</div>
 
                 <div className="flex items-center gap-4">
@@ -246,16 +405,16 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
             <div className="mt-8 grid grid-cols-12 gap-6">
                 {/* LEFT: QR + Players */}
                 <div className="col-span-3 space-y-6">
-                    <div className="rounded-none border border-white/15 bg-[#1A1A1F] p-5">
-                        <div className="text-sm text-white/70">Rejoindre</div>
+                    <div className="border border-white/15 bg-[#1A1A1F] p-5 rounded-none">
+                        <div className="text-xs tracking-[0.35em] text-white/60">REJOINDRE</div>
                         <div className="mt-3 flex items-start gap-4">
-                            <canvas ref={qrCanvasRef} className="rounded-xl border border-white/15 bg-white p-2" />
+                            <canvas ref={qrCanvasRef} className="border border-white/10 bg-white p-2 rounded-none" />
                             <div className="min-w-0">
-                                <div className="text-xs text-white/60">Lien</div>
+                                <div className="text-[10px] tracking-[0.35em] text-white/60">LIEN</div>
                                 <div className="mt-1 break-all font-mono text-xs text-white/80">{joinFullUrl}</div>
                                 <button
                                     onClick={() => navigator.clipboard.writeText(joinFullUrl)}
-                                    className="mt-3 rounded-lg border border-white/15 bg-[#12121A] px-3 py-2 text-sm"
+                                    className="mt-3 border border-white/10 bg-[#0E0E11] px-3 py-2 text-sm rounded-none"
                                 >
                                     Copier
                                 </button>
@@ -263,18 +422,18 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
                         </div>
                     </div>
 
-                    <div className="rounded-none border border-white/15 bg-[#1A1A1F] p-5">
+                    <div className="border border-white/15 bg-[#1A1A1F] p-5 rounded-none">
                         <div className="flex items-center justify-between">
-                            <div className="text-sm text-white/70">Joueurs</div>
-                            <div className="rounded-full border border-white/15 bg-[#12121A] px-3 py-1 font-mono text-sm">
+                            <div className="text-xs tracking-[0.35em] text-white/60">JOUEURS</div>
+                            <div className="border border-white/10 bg-[#0E0E11] px-3 py-1 font-mono text-sm rounded-none">
                                 {players.length}
                             </div>
                         </div>
 
                         <div className="mt-4 space-y-2 max-h-[48vh] overflow-auto pr-1">
                             {players.map((p) => (
-                                <div key={p.id} className="flex items-center gap-3 border border-white/10 bg-[#12121A] px-3 py-2">
-                                    <div className="h-10 w-10 overflow-hidden border border-white/15 bg-black">
+                                <div key={p.id} className="flex items-center gap-3 border border-white/10 bg-[#0E0E11] px-3 py-2 rounded-none">
+                                    <div className="h-10 w-10 overflow-hidden border border-white/10 bg-black rounded-none">
                                         {p.avatarDataUrl ? (
                                             // eslint-disable-next-line @next/next/no-img-element
                                             <img src={p.avatarDataUrl} alt={p.name} className="h-full w-full object-cover" />
@@ -292,15 +451,15 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
                     </div>
                 </div>
 
-                {/* CENTER: Timer + status */}
+                {/* CENTER: Timer + status + VISUALIZER */}
                 <div className="col-span-6 space-y-6">
-                    <div className="rounded-none border border-white/15 bg-[#1A1A1F] p-10 text-center">
+                    <div className="border border-white/15 bg-[#1A1A1F] p-10 text-center rounded-none">
                         {!round && <div className="text-white/70">Aucune manche en cours</div>}
 
                         {round && phase === "LISTENING" && (
                             <>
                                 <div className="text-white/70">Écoute en cours…</div>
-                                <div className="mt-5 font-mono text-[110px] leading-none tracking-[0.15em] text-[#F2F2F2]">
+                                <div className="mt-5 text-6xl font-mono tracking-widest text-white">
                                     {secondsToAnswerStart.toString().padStart(2, "0")}
                                 </div>
                                 <div className="mt-3 text-white/60">Réponses dans (après A/B/C/D)</div>
@@ -312,8 +471,8 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
                                 <div className="text-white/70">Répondez maintenant</div>
                                 <div
                                     className={[
-                                        "mt-5 font-mono text-[140px] leading-none tracking-[0.15em]",
-                                        secondsLeft <= 3 ? "text-[#FF3D3D]" : "text-[#F2F2F2]",
+                                        "mt-5 text-7xl font-mono tracking-widest",
+                                        secondsLeft <= 3 ? "text-red-400" : "text-white",
                                     ].join(" ")}
                                 >
                                     {secondsLeft.toString().padStart(2, "0")}
@@ -329,7 +488,7 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
                                 {!ended && (
                                     <button
                                         onClick={() => endRound(round.roundId)}
-                                        className="mt-5 rounded-xl border border-white/15 bg-[#12121A] px-5 py-3"
+                                        className="mt-5 border border-white/10 bg-[#0E0E11] px-5 py-3 rounded-none"
                                     >
                                         Calculer résultat
                                     </button>
@@ -337,26 +496,44 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
                             </>
                         )}
 
-                        <audio ref={audioRef} controls className="mt-8 w-full opacity-90" />
+                        {/* ✅ Visualiseur + lettre en fond */}
+                        <div className="mt-8">
+                            <div className="text-[10px] tracking-[0.35em] text-white/50">SPECTRE</div>
+
+                            <div className="mt-3 h-[180px] w-full border border-white/10 bg-[#0E0E11] p-3 relative overflow-hidden rounded-none">
+                                {/* lettre en fond */}
+                                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                    <div className="font-mono text-[120px] leading-none tracking-[0.15em] text-white/10 select-none">
+                                        {currentSegment}
+                                    </div>
+                                </div>
+
+                                <canvas ref={canvasRef} className="h-full w-full relative z-10" />
+                            </div>
+
+                            <div className="mt-3 text-xs text-white/50">
+                                (Lecture en cours — lecteur audio caché)
+                            </div>
+                        </div>
+
+                        {/* audio caché */}
+                        <audio ref={audioRef} className="hidden" />
                     </div>
 
                     {ended && (
-                        <div className="rounded-none border border-white/15 bg-[#1A1A1F] p-6">
-                            <div className="text-sm text-white/70">Résultat</div>
+                        <div className="border border-white/15 bg-[#1A1A1F] p-6 rounded-none">
+                            <div className="text-xs tracking-[0.35em] text-white/60">RÉSULTAT</div>
                             <div className="mt-2 text-xl">
-                                Bonne réponse :{" "}
-                                <span className="bg-[#5B3DF5] px-2 py-1 text-black font-semibold">
-                                    {ended.correctLabel}
-                                  </span>
+                                Bonne réponse : <b>{ended.correctLabel}</b>
                             </div>
 
                             <div className="mt-5">
-                                <div className="text-sm text-white/60">Classement</div>
+                                <div className="text-xs tracking-[0.35em] text-white/60">CLASSEMENT</div>
                                 <div className="mt-3 space-y-2">
                                     {ended.leaderboard?.slice(0, 10).map((p: any, idx: number) => (
                                         <div
                                             key={p.id}
-                                            className="flex items-center justify-between rounded-xl border border-white/15 bg-[#12121A] px-4 py-3"
+                                            className="flex items-center justify-between border border-white/10 bg-[#0E0E11] px-4 py-3 rounded-none"
                                         >
                                             <div className="text-white/80">
                                                 {idx + 1}. <span className="text-white">{p.name}</span>
@@ -372,22 +549,22 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
 
                 {/* RIGHT: A/B/C/D columns */}
                 <div className="col-span-3">
-                    <div className="rounded-none border border-white/15 bg-[#1A1A1F] p-5">
-                        <div className="text-sm text-white/70">Réponses</div>
+                    <div className="border border-white/15 bg-[#1A1A1F] p-5 rounded-none">
+                        <div className="text-xs tracking-[0.35em] text-white/60">RÉPONSES</div>
 
                         <div className="mt-4 grid grid-cols-2 gap-3">
                             {(["A", "B", "C", "D"] as const).map((label, i) => (
-                                <div
-                                    key={label}
-                                    className="border border-white/15 bg-[#0E0E11] p-5"
-                                >
-                                    <div className="flex items-start justify-between">
-                                        <div className="text-6xl font-semibold tracking-tight">{label}</div>
-                                        <div className="font-mono text-3xl text-white/80">{counts[i]}</div>
+                                <div key={label} className="border border-white/10 bg-[#0E0E11] p-5 rounded-none">
+                                    <div className="flex items-center justify-between">
+                                        <div className="text-3xl font-semibold">{label}</div>
+                                        <div className="border border-white/10 bg-white/5 px-3 py-1 font-mono rounded-none">
+                                            {counts[i]}
+                                        </div>
                                     </div>
-                                    <div className="mt-6 h-2 w-full bg-white/10">
+
+                                    <div className="mt-4 h-2 w-full bg-white/10">
                                         <div
-                                            className="h-2 bg-[#5B3DF5]"
+                                            className="h-2 bg-white/50"
                                             style={{
                                                 width: `${players.length ? (counts[i] / players.length) * 100 : 0}%`,
                                             }}
@@ -398,7 +575,7 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
                         </div>
 
                         <div className="mt-5 text-xs text-white/50">
-                            Astuce: tu peux toujours cliquer “Lancer une manche” pour la suivante.
+                            Astuce: tu peux relancer une nouvelle manche à tout moment.
                         </div>
                     </div>
                 </div>
