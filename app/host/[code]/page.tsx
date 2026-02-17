@@ -220,22 +220,23 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
     if (!code) return <main className="min-h-screen bg-black text-white p-8">Chargement…</main>;
 
     return (
-        <main className="min-h-screen bg-[#0B0B10] text-white p-8">
+        <main className="min-h-screen tekno-grid tekno-noise text-[#F2F2F2] p-8">
             {/* TOP BAR */}
-            <div className="flex items-center justify-between">
-                <div className="text-sm text-white/60">HOST</div>
+            <div className="flex items-center justify-between border border-white/15 bg-[#0E0E11]/60 px-6 py-4">
+                <div className="text-xs tracking-[0.3em] text-white/60">HOST</div>
+
                 <div className="flex items-center gap-4">
-                    <div className="text-white/60">CODE</div>
-                    <div className="rounded-full border border-white/10 bg-white/5 px-4 py-2 font-mono text-lg tracking-widest">
+                    <div className="text-xs tracking-[0.3em] text-white/60">ROOM</div>
+                    <div className="border border-white/15 bg-[#1A1A1F] px-5 py-2 font-mono text-xl tracking-[0.25em]">
                         {code}
                     </div>
                 </div>
 
                 <button
                     onClick={startRound}
-                    className="rounded-xl bg-white text-black px-5 py-3 font-semibold"
+                    className="border border-white/20 bg-[#F2F2F2] px-6 py-3 text-sm font-semibold tracking-wide text-black hover:bg-white"
                 >
-                    Lancer une manche
+                    LANCER UNE MANCHE
                 </button>
             </div>
 
@@ -245,16 +246,16 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
             <div className="mt-8 grid grid-cols-12 gap-6">
                 {/* LEFT: QR + Players */}
                 <div className="col-span-3 space-y-6">
-                    <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
+                    <div className="rounded-none border border-white/15 bg-[#1A1A1F] p-5">
                         <div className="text-sm text-white/70">Rejoindre</div>
                         <div className="mt-3 flex items-start gap-4">
-                            <canvas ref={qrCanvasRef} className="rounded-xl border border-white/10 bg-white p-2" />
+                            <canvas ref={qrCanvasRef} className="rounded-xl border border-white/15 bg-white p-2" />
                             <div className="min-w-0">
                                 <div className="text-xs text-white/60">Lien</div>
                                 <div className="mt-1 break-all font-mono text-xs text-white/80">{joinFullUrl}</div>
                                 <button
                                     onClick={() => navigator.clipboard.writeText(joinFullUrl)}
-                                    className="mt-3 rounded-lg border border-white/10 bg-[#12121A] px-3 py-2 text-sm"
+                                    className="mt-3 rounded-lg border border-white/15 bg-[#12121A] px-3 py-2 text-sm"
                                 >
                                     Copier
                                 </button>
@@ -262,17 +263,17 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
                         </div>
                     </div>
 
-                    <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
+                    <div className="rounded-none border border-white/15 bg-[#1A1A1F] p-5">
                         <div className="flex items-center justify-between">
                             <div className="text-sm text-white/70">Joueurs</div>
-                            <div className="rounded-full border border-white/10 bg-[#12121A] px-3 py-1 font-mono text-sm">
+                            <div className="rounded-full border border-white/15 bg-[#12121A] px-3 py-1 font-mono text-sm">
                                 {players.length}
                             </div>
                         </div>
 
                         <div className="mt-4 space-y-2 max-h-[48vh] overflow-auto pr-1">
                             {players.map((p) => (
-                                <div key={p.id} className="rounded-xl border border-white/10 bg-[#12121A] px-3 py-2">
+                                <div key={p.id} className="rounded-xl border border-white/15 bg-[#12121A] px-3 py-2">
                                     <div className="text-white">{p.name}</div>
                                 </div>
                             ))}
@@ -283,13 +284,13 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
 
                 {/* CENTER: Timer + status */}
                 <div className="col-span-6 space-y-6">
-                    <div className="rounded-3xl border border-white/10 bg-white/5 p-10 text-center">
+                    <div className="rounded-none border border-white/15 bg-[#1A1A1F] p-10 text-center">
                         {!round && <div className="text-white/70">Aucune manche en cours</div>}
 
                         {round && phase === "LISTENING" && (
                             <>
                                 <div className="text-white/70">Écoute en cours…</div>
-                                <div className="mt-5 text-6xl font-mono tracking-widest text-white">
+                                <div className="mt-5 font-mono text-[110px] leading-none tracking-[0.15em] text-[#F2F2F2]">
                                     {secondsToAnswerStart.toString().padStart(2, "0")}
                                 </div>
                                 <div className="mt-3 text-white/60">Réponses dans (après A/B/C/D)</div>
@@ -299,7 +300,12 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
                         {round && phase === "ANSWERING" && (
                             <>
                                 <div className="text-white/70">Répondez maintenant</div>
-                                <div className="mt-5 text-7xl font-mono tracking-widest text-white">
+                                <div
+                                    className={[
+                                        "mt-5 font-mono text-[140px] leading-none tracking-[0.15em]",
+                                        secondsLeft <= 3 ? "text-[#FF3D3D]" : "text-[#F2F2F2]",
+                                    ].join(" ")}
+                                >
                                     {secondsLeft.toString().padStart(2, "0")}
                                 </div>
                                 <div className="mt-3 text-white/60">Fenêtre de réponse (10s)</div>
@@ -313,7 +319,7 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
                                 {!ended && (
                                     <button
                                         onClick={() => endRound(round.roundId)}
-                                        className="mt-5 rounded-xl border border-white/10 bg-[#12121A] px-5 py-3"
+                                        className="mt-5 rounded-xl border border-white/15 bg-[#12121A] px-5 py-3"
                                     >
                                         Calculer résultat
                                     </button>
@@ -325,10 +331,13 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
                     </div>
 
                     {ended && (
-                        <div className="rounded-2xl border border-white/10 bg-white/5 p-6">
+                        <div className="rounded-none border border-white/15 bg-[#1A1A1F] p-6">
                             <div className="text-sm text-white/70">Résultat</div>
                             <div className="mt-2 text-xl">
-                                Bonne réponse : <b>{ended.correctLabel}</b>
+                                Bonne réponse :{" "}
+                                <span className="bg-[#5B3DF5] px-2 py-1 text-black font-semibold">
+                                    {ended.correctLabel}
+                                  </span>
                             </div>
 
                             <div className="mt-5">
@@ -337,7 +346,7 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
                                     {ended.leaderboard?.slice(0, 10).map((p: any, idx: number) => (
                                         <div
                                             key={p.id}
-                                            className="flex items-center justify-between rounded-xl border border-white/10 bg-[#12121A] px-4 py-3"
+                                            className="flex items-center justify-between rounded-xl border border-white/15 bg-[#12121A] px-4 py-3"
                                         >
                                             <div className="text-white/80">
                                                 {idx + 1}. <span className="text-white">{p.name}</span>
@@ -353,25 +362,22 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
 
                 {/* RIGHT: A/B/C/D columns */}
                 <div className="col-span-3">
-                    <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
+                    <div className="rounded-none border border-white/15 bg-[#1A1A1F] p-5">
                         <div className="text-sm text-white/70">Réponses</div>
 
                         <div className="mt-4 grid grid-cols-2 gap-3">
                             {(["A", "B", "C", "D"] as const).map((label, i) => (
                                 <div
                                     key={label}
-                                    className="rounded-2xl border border-white/10 bg-[#12121A] p-5"
+                                    className="border border-white/15 bg-[#0E0E11] p-5"
                                 >
-                                    <div className="flex items-center justify-between">
-                                        <div className="text-3xl font-semibold">{label}</div>
-                                        <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 font-mono">
-                                            {counts[i]}
-                                        </div>
+                                    <div className="flex items-start justify-between">
+                                        <div className="text-6xl font-semibold tracking-tight">{label}</div>
+                                        <div className="font-mono text-3xl text-white/80">{counts[i]}</div>
                                     </div>
-
-                                    <div className="mt-4 h-2 w-full rounded-full bg-white/10">
+                                    <div className="mt-6 h-2 w-full bg-white/10">
                                         <div
-                                            className="h-2 rounded-full bg-white/50"
+                                            className="h-2 bg-[#5B3DF5]"
                                             style={{
                                                 width: `${players.length ? (counts[i] / players.length) * 100 : 0}%`,
                                             }}
