@@ -22,7 +22,12 @@ export async function GET(_req: Request, { params }: { params: Promise<Params> }
 
     const players = (playersRaw ?? [])
         .filter(Boolean)
-        .map((p: any) => ({ id: p.id as string, name: p.name as string, joinedAt: p.joinedAt as number }))
+        .map((p: any) => ({
+            id: p.id as string,
+            name: p.name as string,
+            avatarDataUrl: (p.avatarDataUrl ?? null) as string | null,
+            joinedAt: p.joinedAt as number,
+        }))
         .sort((a, b) => a.joinedAt - b.joinedAt);
 
     return NextResponse.json({ players });

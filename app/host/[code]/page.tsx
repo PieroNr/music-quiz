@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import QRCode from "qrcode";
 import { makePusherClient } from "@/lib/pusher-client";
 
-type Player = { id: string; name: string; joinedAt: number };
+type Player = { id: string; name: string; avatarDataUrl: string | null; joinedAt: number };
 
 type RoundPayload = {
     roundId: string;
@@ -273,7 +273,17 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
 
                         <div className="mt-4 space-y-2 max-h-[48vh] overflow-auto pr-1">
                             {players.map((p) => (
-                                <div key={p.id} className="rounded-xl border border-white/15 bg-[#12121A] px-3 py-2">
+                                <div key={p.id} className="flex items-center gap-3 border border-white/10 bg-[#12121A] px-3 py-2">
+                                    <div className="h-10 w-10 overflow-hidden border border-white/15 bg-black">
+                                        {p.avatarDataUrl ? (
+                                            // eslint-disable-next-line @next/next/no-img-element
+                                            <img src={p.avatarDataUrl} alt={p.name} className="h-full w-full object-cover" />
+                                        ) : (
+                                            <div className="h-full w-full flex items-center justify-center text-xs text-white/50">
+                                                {p.name?.slice(0, 1)?.toUpperCase() ?? "?"}
+                                            </div>
+                                        )}
+                                    </div>
                                     <div className="text-white">{p.name}</div>
                                 </div>
                             ))}
