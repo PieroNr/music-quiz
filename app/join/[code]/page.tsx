@@ -58,7 +58,7 @@ export default function JoinPage({ params }: { params: Promise<{ code: string }>
     // Temps
     const [now, setNow] = useState(() => Date.now());
 
-    // Haptique: éviter de vibrer plusieurs fois
+    // Haptique: éviter plusieurs vibrations par manche
     const didVibrateForRound = useRef<string | null>(null);
 
     // Récupérer le code depuis l'URL
@@ -92,7 +92,7 @@ export default function JoinPage({ params }: { params: Promise<{ code: string }>
             setPicked(null);
             setEnded(null);
             setError(null);
-            didVibrateForRound.current = null; // reset pour la manche
+            didVibrateForRound.current = null;
         });
 
         channel.bind("round-ended", (payload: any) => {
@@ -139,17 +139,15 @@ export default function JoinPage({ params }: { params: Promise<{ code: string }>
         return "TERMINE";
     }, [round, now]);
 
-    // ✅ VIBRATION au début de la phase réponse (une seule fois par manche)
+    // ✅ vibration au début de la phase réponse (1 fois / manche)
     useEffect(() => {
         if (!round) return;
         if (phase !== "REPONSE") return;
-
         if (didVibrateForRound.current === round.roundId) return;
+
         didVibrateForRound.current = round.roundId;
 
-        // Vibrate dispo seulement sur certains navigateurs / Android surtout
         if (typeof navigator !== "undefined" && "vibrate" in navigator) {
-            // petit double tap discret
             navigator.vibrate?.([30, 40, 30]);
         }
     }, [phase, round]);
@@ -157,7 +155,6 @@ export default function JoinPage({ params }: { params: Promise<{ code: string }>
     const secondesAvantReponse = round ? Math.max(0, Math.ceil((round.answerStartAt - now) / 1000)) : 0;
     const secondesRestantes = round ? Math.max(0, Math.ceil((round.endsAt - now) / 1000)) : 0;
 
-    // Progress fenêtre réponse
     const progressReponse = useMemo(() => {
         if (!round) return 0;
         const total = round.endsAt - round.answerStartAt;
@@ -165,7 +162,6 @@ export default function JoinPage({ params }: { params: Promise<{ code: string }>
         return clamp(restant / total, 0, 1);
     }, [round, now]);
 
-    // Progress écoute (timeline)
     const progressEcoute = useMemo(() => {
         if (!round) return 0;
         const total = round.answerStartAt - round.sequenceStartAt;
@@ -208,14 +204,14 @@ export default function JoinPage({ params }: { params: Promise<{ code: string }>
 
     if (!code) {
         return (
-            <main className="h-[100dvh] overflow-hidden bg-[#0E0E11] text-[#F2F2F2] p-6">
+            <main className="min-h-screen bg-[#0E0E11] text-[#F2F2F2] p-6">
                 Chargement…
             </main>
         );
     }
 
     return (
-        <main className="h-[100dvh] overflow-hidden bg-[#0E0E11] text-[#F2F2F2]">
+        <main className="min-h-screen bg-[#0E0E11] text-[#F2F2F2] overflow-y-auto">
             {/* Fond grille tekno */}
             <div
                 className="pointer-events-none fixed inset-0"
@@ -226,137 +222,134 @@ export default function JoinPage({ params }: { params: Promise<{ code: string }>
                 }}
             />
 
-            {/* Conteneur full height, sans scroll */}
-            <div className="relative mx-auto h-[100dvh] max-w-md px-4 pb-4 pt-4 overflow-hidden flex flex-col">
-                {/* HEADER (fixe) */}
-                <div className="shrink-0">
-                    <div className="flex items-center justify-between border border-white/10 bg-[#0E0E11]/70 px-4 py-3">
-                        <div className="text-[10px] tracking-[0.35em] text-white/60">JOUEUR</div>
+            <div className="relative mx-auto max-w-md px-4 pb-6 pt-4">
+                {/* Barre du haut */}
+                <div className="flex items-center justify-between border border-white/10 bg-[#0E0E11]/70 px-4 py-3">
+                    <div className="text-[10px] tracking-[0.35em] text-white/60">JOUEUR</div>
 
-                        <div className="flex items-center gap-3">
-                            <div className="text-[10px] tracking-[0.35em] text-white/60">CODE</div>
-                            <div className="border border-white/15 bg-[#1A1A1F] px-3 py-1 font-mono text-sm tracking-[0.25em]">
-                                {code}
-                            </div>
+                    <div className="flex items-center gap-3">
+                        <div className="text-[10px] tracking-[0.35em] text-white/60">CODE</div>
+                        <div className="border border-white/15 bg-[#1A1A1F] px-3 py-1 font-mono text-sm tracking-[0.25em]">
+                            {code}
                         </div>
+                    </div>
 
-                        <div className="hidden sm:block text-[10px] tracking-[0.35em] text-white/60">
-                            {labelDifficulte}
-                        </div>
+                    <div className="hidden sm:block text-[10px] tracking-[0.35em] text-white/60">
+                        {labelDifficulte}
                     </div>
                 </div>
 
-                {/* CONTENU (flex) */}
-                <div className="mt-3 flex-1 overflow-hidden">
-                    {/* Bloc connexion */}
-                    {!joined && (
-                        <div className="border border-white/10 bg-[#1A1A1F] p-5">
-                            <div className="text-[10px] tracking-[0.35em] text-white/60">IDENTITÉ</div>
-                            <div className="mt-2 text-lg font-semibold">Entre ton pseudo</div>
+                {/* Bloc connexion */}
+                {!joined && (
+                    <div className="mt-5 border border-white/10 bg-[#1A1A1F] p-5">
+                        <div className="text-[10px] tracking-[0.35em] text-white/60">IDENTITÉ</div>
+                        <div className="mt-2 text-lg font-semibold">Entre ton pseudo</div>
 
-                            <input
-                                className="mt-4 w-full border border-white/10 bg-[#0E0E11] px-4 py-3 text-white placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-white/20"
-                                value={name}
-                                onChange={(e) => setName(e.target.value)}
-                                placeholder="Pseudo"
-                                maxLength={24}
-                            />
+                        <input
+                            className="mt-4 w-full border border-white/10 bg-[#0E0E11] px-4 py-3 text-white placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-white/20"
+                            value={name}
+                            onChange={(e) => setName(e.target.value)}
+                            placeholder="Pseudo"
+                            maxLength={24}
+                        />
 
-                            <button
-                                onClick={join}
-                                disabled={loadingJoin || !name.trim()}
-                                className="mt-4 w-full border border-white/20 bg-[#F2F2F2] px-4 py-3 text-sm font-semibold tracking-wide text-black disabled:opacity-50 transition-transform active:scale-[0.99]"
-                            >
-                                {loadingJoin ? "Connexion…" : "Rejoindre"}
-                            </button>
+                        <button
+                            onClick={join}
+                            disabled={loadingJoin || !name.trim()}
+                            className="mt-4 w-full border border-white/20 bg-[#F2F2F2] px-4 py-3 text-sm font-semibold tracking-wide text-black disabled:opacity-50 transition-transform active:scale-[0.99]"
+                        >
+                            {loadingJoin ? "Connexion…" : "Rejoindre"}
+                        </button>
 
-                            {error && <p className="mt-3 text-sm text-[#FF3D3D]">{error}</p>}
-                        </div>
-                    )}
+                        {error && <p className="mt-3 text-sm text-[#FF3D3D]">{error}</p>}
+                    </div>
+                )}
 
-                    {joined && (
-                        <>
-                            {/* Bloc statut — hauteur fixe */}
-                            <div className="border border-white/10 bg-[#1A1A1F] p-4">
-                                <div className="flex items-start justify-between gap-3">
-                                    <div className="min-w-0">
-                                        <div className="text-[10px] tracking-[0.35em] text-white/60">CONNECTÉ EN TANT QUE</div>
-                                        <div className="mt-1 truncate text-lg font-semibold">{joined.name}</div>
-                                    </div>
-
-                                    <div className="text-right">
-                                        <div className="text-[10px] tracking-[0.35em] text-white/60">ÉTAT</div>
-                                        <div className="mt-1 text-sm font-semibold tracking-wide">
-                                            {phase === "ATTENTE" && "EN ATTENTE"}
-                                            {phase === "ECOUTE" && "ÉCOUTE"}
-                                            {phase === "REPONSE" && "RÉPONDS"}
-                                            {phase === "TERMINE" && "FINI"}
-                                        </div>
-                                    </div>
+                {/* UI en jeu */}
+                {joined && (
+                    <>
+                        {/* Bloc statut — hauteur fixe (anti-jump) */}
+                        <div className="mt-5 border border-white/10 bg-[#1A1A1F] p-4">
+                            <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                    <div className="text-[10px] tracking-[0.35em] text-white/60">CONNECTÉ EN TANT QUE</div>
+                                    <div className="mt-1 truncate text-lg font-semibold">{joined.name}</div>
                                 </div>
 
-                                <div className="mt-4 border-t border-white/10 pt-3">
-                                    <div className="relative h-[112px]">
-                                        <FadeSlideSection show={!!showWaiting} className="absolute inset-0">
-                                            <div className="text-sm text-white/75">En attente de la prochaine manche…</div>
-                                            <div className="mt-3 text-[10px] tracking-[0.35em] text-white/50">
-                                                Garde l&apos;écran ouvert
-                                            </div>
-                                        </FadeSlideSection>
-
-                                        <FadeSlideSection show={!!showListening} className="absolute inset-0">
-                                            <div className="text-sm text-white/80">Écoute bien, les réponses arrivent…</div>
-
-                                            <div className="mt-3 flex items-center justify-between">
-                                                <div className="text-[10px] tracking-[0.35em] text-white/60">DÉBUT DANS</div>
-                                                <div className="font-mono text-2xl tracking-[0.25em]">
-                                                    {secondesAvantReponse.toString().padStart(2, "0")}
-                                                </div>
-                                            </div>
-
-                                            <div className="mt-3 h-1 w-full bg-white/10">
-                                                <div className="h-1 bg-[#5B3DF5]" style={{ width: `${progressEcoute * 100}%` }} />
-                                            </div>
-
-                                            <div className="mt-2 text-[10px] tracking-[0.35em] text-white/50">
-                                                ÉCOUTE EN COURS
-                                            </div>
-                                        </FadeSlideSection>
-
-                                        <FadeSlideSection show={!!showAnswering} className="absolute inset-0">
-                                            <div className="flex items-center justify-between">
-                                                <div className="text-[10px] tracking-[0.35em] text-white/60">TEMPS RESTANT</div>
-                                                <div
-                                                    className={[
-                                                        "font-mono text-3xl tracking-[0.25em]",
-                                                        secondesRestantes <= 3 ? "text-[#FF3D3D]" : "text-[#F2F2F2]",
-                                                    ].join(" ")}
-                                                >
-                                                    {secondesRestantes.toString().padStart(2, "0")}
-                                                </div>
-                                            </div>
-
-                                            <div className="mt-3 h-1 w-full bg-white/10">
-                                                <div className="h-1 bg-[#5B3DF5]" style={{ width: `${progressReponse * 100}%` }} />
-                                            </div>
-
-                                            <div className="mt-2 text-sm text-white/70">
-                                                {picked === null ? "Choisis A / B / C / D" : "Réponse enregistrée"}
-                                            </div>
-                                        </FadeSlideSection>
-
-                                        <FadeSlideSection show={!!showAfter} className="absolute inset-0">
-                                            <div className="text-sm text-white/75">Temps écoulé.</div>
-                                            <div className="mt-3 text-[10px] tracking-[0.35em] text-white/50">
-                                                Attente du résultat
-                                            </div>
-                                        </FadeSlideSection>
+                                <div className="text-right">
+                                    <div className="text-[10px] tracking-[0.35em] text-white/60">ÉTAT</div>
+                                    <div className="mt-1 text-sm font-semibold tracking-wide">
+                                        {phase === "ATTENTE" && "EN ATTENTE"}
+                                        {phase === "ECOUTE" && "ÉCOUTE"}
+                                        {phase === "REPONSE" && "RÉPONDS"}
+                                        {phase === "TERMINE" && "FINI"}
                                     </div>
                                 </div>
                             </div>
 
-                            {/* Réponses 2x2 — hauteur fixe */}
-                            <div className="mt-3">
+                            <div className="mt-4 border-t border-white/10 pt-3">
+                                <div className="relative h-[112px]">
+                                    <FadeSlideSection show={!!showWaiting} className="absolute inset-0">
+                                        <div className="text-sm text-white/75">En attente de la prochaine manche…</div>
+                                        <div className="mt-3 text-[10px] tracking-[0.35em] text-white/50">
+                                            Garde l&apos;écran ouvert
+                                        </div>
+                                    </FadeSlideSection>
+
+                                    <FadeSlideSection show={!!showListening} className="absolute inset-0">
+                                        <div className="text-sm text-white/80">Écoute bien, les réponses arrivent…</div>
+
+                                        <div className="mt-3 flex items-center justify-between">
+                                            <div className="text-[10px] tracking-[0.35em] text-white/60">DÉBUT DANS</div>
+                                            <div className="font-mono text-2xl tracking-[0.25em]">
+                                                {secondesAvantReponse.toString().padStart(2, "0")}
+                                            </div>
+                                        </div>
+
+                                        <div className="mt-3 h-1 w-full bg-white/10">
+                                            <div className="h-1 bg-[#5B3DF5]" style={{ width: `${progressEcoute * 100}%` }} />
+                                        </div>
+
+                                        <div className="mt-2 text-[10px] tracking-[0.35em] text-white/50">
+                                            ÉCOUTE EN COURS
+                                        </div>
+                                    </FadeSlideSection>
+
+                                    <FadeSlideSection show={!!showAnswering} className="absolute inset-0">
+                                        <div className="flex items-center justify-between">
+                                            <div className="text-[10px] tracking-[0.35em] text-white/60">TEMPS RESTANT</div>
+                                            <div
+                                                className={[
+                                                    "font-mono text-3xl tracking-[0.25em]",
+                                                    secondesRestantes <= 3 ? "text-[#FF3D3D]" : "text-[#F2F2F2]",
+                                                ].join(" ")}
+                                            >
+                                                {secondesRestantes.toString().padStart(2, "0")}
+                                            </div>
+                                        </div>
+
+                                        <div className="mt-3 h-1 w-full bg-white/10">
+                                            <div className="h-1 bg-[#5B3DF5]" style={{ width: `${progressReponse * 100}%` }} />
+                                        </div>
+
+                                        <div className="mt-2 text-sm text-white/70">
+                                            {picked === null ? "Choisis A / B / C / D" : "Réponse enregistrée"}
+                                        </div>
+                                    </FadeSlideSection>
+
+                                    <FadeSlideSection show={!!showAfter} className="absolute inset-0">
+                                        <div className="text-sm text-white/75">Temps écoulé.</div>
+                                        <div className="mt-3 text-[10px] tracking-[0.35em] text-white/50">
+                                            Attente du résultat
+                                        </div>
+                                    </FadeSlideSection>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Réponses 2x2 */}
+                        {round && (
+                            <div className="mt-4">
                                 <div className="grid grid-cols-2 gap-3">
                                     {(["A", "B", "C", "D"] as const).map((label, i) => {
                                         const isSelected = picked === i;
@@ -413,41 +406,41 @@ export default function JoinPage({ params }: { params: Promise<{ code: string }>
                                     </FadeSlideSection>
                                 </div>
                             </div>
-                        </>
-                    )}
-                </div>
+                        )}
 
-                {/* FOOTER RÉSULTAT (fixe, hauteur) */}
-                <div className="shrink-0 mt-3 relative h-[132px]">
-                    <FadeSlideSection show={!!showResult} className="absolute inset-0">
-                        <div className="border border-white/10 bg-[#1A1A1F] p-4">
-                            <div className="text-[10px] tracking-[0.35em] text-white/60">RÉSULTAT</div>
+                        {/* Résultat */}
+                        <div className="relative mt-4 h-[132px]">
+                            <FadeSlideSection show={!!showResult} className="absolute inset-0">
+                                <div className="border border-white/10 bg-[#1A1A1F] p-4">
+                                    <div className="text-[10px] tracking-[0.35em] text-white/60">RÉSULTAT</div>
 
-                            <div className="mt-2 text-base">
-                                Bonne réponse :{" "}
-                                <span className="bg-[#5B3DF5] px-2 py-1 font-semibold text-black">
-                  {ended ? ["A", "B", "C", "D"][ended.correctIndex] : "—"}
-                </span>
-                            </div>
+                                    <div className="mt-2 text-base">
+                                        Bonne réponse :{" "}
+                                        <span className="bg-[#5B3DF5] px-2 py-1 font-semibold text-black">
+                      {ended ? ["A", "B", "C", "D"][ended.correctIndex] : "—"}
+                    </span>
+                                    </div>
 
-                            <div className="mt-2 text-sm text-white/80">
-                                Ton choix :{" "}
-                                <span className="font-semibold">
-                  {picked === null ? "—" : ["A", "B", "C", "D"][picked]}
-                </span>
-                            </div>
+                                    <div className="mt-2 text-sm text-white/80">
+                                        Ton choix :{" "}
+                                        <span className="font-semibold">
+                      {picked === null ? "—" : ["A", "B", "C", "D"][picked]}
+                    </span>
+                                    </div>
 
-                            <div className="mt-3 text-[10px] tracking-[0.35em] text-white/50">
-                                PROCHAINE MANCHE BIENTÔT
-                            </div>
+                                    <div className="mt-3 text-[10px] tracking-[0.35em] text-white/50">
+                                        PROCHAINE MANCHE BIENTÔT
+                                    </div>
+                                </div>
+                            </FadeSlideSection>
+
+                            {/* placeholder invisible pour garder la hauteur */}
+                            <FadeSlideSection show={!showResult} className="absolute inset-0">
+                                <div className="border border-white/10 bg-[#1A1A1F] p-4 opacity-0">placeholder</div>
+                            </FadeSlideSection>
                         </div>
-                    </FadeSlideSection>
-
-                    {/* placeholder invisible pour garder la hauteur */}
-                    <FadeSlideSection show={!showResult} className="absolute inset-0">
-                        <div className="border border-white/10 bg-[#1A1A1F] p-4 opacity-0">placeholder</div>
-                    </FadeSlideSection>
-                </div>
+                    </>
+                )}
             </div>
         </main>
     );
