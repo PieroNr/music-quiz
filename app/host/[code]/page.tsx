@@ -45,8 +45,11 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
     const rafRef = useRef<number | null>(null);
     const isDrawingRef = useRef(false);
 
-    // ✅ lettre affichée derrière le spectre
+    // lettre affichée derrière le spectre (Q / A / B / C / D / —)
     const [currentSegment, setCurrentSegment] = useState<"—" | "Q" | "A" | "B" | "C" | "D">("—");
+
+    // écran de fin de partie
+    const [showSummary, setShowSummary] = useState(false);
 
     // qr
     const qrCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -69,11 +72,11 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
         setJoinFullUrl(`${window.location.origin}/join/${code}`);
     }, [code]);
 
-    // draw qr
+    // draw qr (on redessine aussi quand on revient de l'écran summary)
     useEffect(() => {
         if (!joinFullUrl || !qrCanvasRef.current) return;
         QRCode.toCanvas(qrCanvasRef.current, joinFullUrl, { width: 220, margin: 1 }).catch(() => {});
-    }, [joinFullUrl]);
+    }, [joinFullUrl, showSummary]);
 
     // init visualizer (AudioContext + analyser)
     function ensureAudioGraph() {
@@ -87,7 +90,6 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
         const ctx = audioCtxRef.current;
 
         if (ctx.state === "suspended") {
-            // iOS/Safari: doit être réveillé sur geste utilisateur (bouton "Lancer une manche")
             ctx.resume().catch(() => {});
         }
 
@@ -98,7 +100,6 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
             analyserRef.current = analyser;
         }
 
-        // MediaElementAudioSourceNode ne peut être créé qu’une fois par <audio>
         if (!srcNodeRef.current) {
             srcNodeRef.current = ctx.createMediaElementSource(audioEl);
             srcNodeRef.current.connect(analyserRef.current!);
@@ -214,11 +215,8 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
         const pusher = makePusherClient();
         const channel = pusher.subscribe(`room-${code}`);
 
-        channel.bind("player-joined", (payload: any) => {
-            setPlayers((prev) => {
-                if (prev.some((p) => p.id === payload.id)) return prev;
-                return [...prev, payload].sort((a, b) => a.joinedAt - b.joinedAt);
-            });
+        channel.bind("player-joined", async (_payload: any) => {
+            await refreshPlayers();
         });
 
         channel.bind("round-started", (payload: RoundPayload) => {
@@ -227,6 +225,7 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
             setEnded(null);
             setError(null);
             setCurrentSegment("—");
+            setShowSummary(false); // retour en live si nouvelle manche
             playSequence(payload.questionUrl, payload.optionUrls).catch(() => {});
         });
 
@@ -283,7 +282,7 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
         // question
         await playUrl(questionUrl, "Q");
 
-        // A/B/C/D each preceded by 3 seconds gap
+        // A/B/C/D, chaque réponse séparée par 3s
         const labels: Array<"A" | "B" | "C" | "D"> = ["A", "B", "C", "D"];
         for (let i = 0; i < optionUrls.length; i++) {
             await wait(3000);
@@ -297,7 +296,6 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
         setError(null);
 
         try {
-            // wake audio context on user gesture
             ensureAudioGraph();
 
             const res = await fetch(`/api/room/${code}/round/start`, { method: "POST" });
@@ -308,6 +306,7 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
             setAnswers({});
             setEnded(null);
             setCurrentSegment("—");
+            setShowSummary(false);
 
             playSequence(data.questionUrl, data.optionUrls).catch(() => {});
         } catch (e) {
@@ -376,8 +375,225 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
         return c;
     }, [answers]);
 
+    // Leaderboard global
+    const leaderboardWithAvatars = useMemo(() => {
+        let base: Array<{ id: string; name: string; score: number }> = [];
+
+        if (ended && Array.isArray(ended.leaderboard)) {
+            base = ended.leaderboard as Array<{ id: string; name: string; score: number }>;
+        } else {
+            base = players.map((p) => ({
+                id: p.id,
+                name: p.name,
+                score: 0,
+            }));
+        }
+
+        return base
+            .map((p) => {
+                const player = players.find((pl) => pl.id === p.id);
+                return {
+                    ...p,
+                    avatarDataUrl: player?.avatarDataUrl ?? null,
+                };
+            })
+            .sort((a, b) => {
+                if (b.score !== a.score) return b.score - a.score;
+                return a.name.localeCompare(b.name);
+            });
+    }, [ended, players]);
+
     if (!code) return <main className="min-h-screen bg-black text-white p-8">Chargement…</main>;
 
+    // ============================================
+    // ÉCRAN DE FIN DE PARTIE (SUMMARY)
+    // ============================================
+    if (showSummary && leaderboardWithAvatars.length > 0) {
+        const top3 = leaderboardWithAvatars.slice(0, 3);
+        const rest = leaderboardWithAvatars.slice(3);
+
+        return (
+            <main className="min-h-screen bg-[#0B0B10] text-white p-8">
+                {/* BARRE HAUT */}
+                <div className="flex items-center justify-between border border-white/10 bg-[#0E0E11]/60 px-6 py-4">
+                    <div className="text-xs tracking-[0.3em] text-white/60">FIN DE PARTIE</div>
+
+                    <div className="flex items-center gap-4">
+                        <div className="text-xs tracking-[0.3em] text-white/60">ROOM</div>
+                        <div className="border border-white/15 bg-[#1A1A1F] px-5 py-2 font-mono text-xl tracking-[0.25em]">
+                            {code}
+                        </div>
+                    </div>
+
+                    <button
+                        onClick={() => setShowSummary(false)}
+                        className="border border-white/20 bg-[#0E0E11] px-5 py-2 text-xs font-semibold tracking-[0.25em] text-white hover:border-white/40"
+                    >
+                        VUE LIVE
+                    </button>
+                </div>
+
+                {/* PODIUM + CLASSEMENT */}
+                <div className="mt-10 flex flex-col items-center gap-10">
+                    {/* Titre */}
+                    <div className="text-center">
+                        <div className="text-[10px] tracking-[0.35em] text-white/50">PODIUM</div>
+                        <div className="mt-2 text-4xl font-semibold tracking-[0.2em]">GUESS THE DROP</div>
+                    </div>
+
+                    {/* PODIUM 1 / 2 / 3 */}
+                    <div className="flex flex-wrap items-end justify-center gap-6">
+                        {/* #2 */}
+                        {top3[1] && (
+                            <div className="w-52 border border-white/15 bg-[#1A1A1F] px-4 pb-4 pt-6 text-center rounded-none">
+                                <div className="text-xs tracking-[0.3em] text-white/60">#02</div>
+                                <div className="mt-3 mx-auto h-20 w-20 border border-white/15 bg-black overflow-hidden rounded-none">
+                                    {top3[1].avatarDataUrl ? (
+                                        // eslint-disable-next-line @next/next/no-img-element
+                                        <img
+                                            src={top3[1].avatarDataUrl}
+                                            alt={top3[1].name}
+                                            className="h-full w-full object-cover"
+                                        />
+                                    ) : (
+                                        <div className="flex h-full w-full items-center justify-center text-2xl text-white/60">
+                                            {top3[1].name?.slice(0, 1)?.toUpperCase() ?? "?"}
+                                        </div>
+                                    )}
+                                </div>
+                                <div className="mt-3 text-sm text-white/80">{top3[1].name}</div>
+                                <div className="mt-2 font-mono text-lg text-white/90">{top3[1].score} pts</div>
+                            </div>
+                        )}
+
+                        {/* #1 */}
+                        {top3[0] && (
+                            <div className="w-64 border border-white/40 bg-[#F2F2F2] px-5 pb-5 pt-8 text-center text-black rounded-none">
+                                <div className="flex items-center justify-center gap-2 text-xs tracking-[0.3em]">
+                                    <span>CHAMPION</span>
+                                    <span>👑</span>
+                                </div>
+                                <div className="mt-3 mx-auto h-24 w-24 border border-black/20 bg-black overflow-hidden rounded-none">
+                                    {top3[0].avatarDataUrl ? (
+                                        // eslint-disable-next-line @next/next/no-img-element
+                                        <img
+                                            src={top3[0].avatarDataUrl}
+                                            alt={top3[0].name}
+                                            className="h-full w-full object-cover"
+                                        />
+                                    ) : (
+                                        <div className="flex h-full w-full items-center justify-center text-3xl text-white/80">
+                                            {top3[0].name?.slice(0, 1)?.toUpperCase() ?? "?"}
+                                        </div>
+                                    )}
+                                </div>
+                                <div className="mt-4 text-lg font-semibold tracking-wide">{top3[0].name}</div>
+                                <div className="mt-2 font-mono text-2xl">{top3[0].score} pts</div>
+                            </div>
+                        )}
+
+                        {/* #3 */}
+                        {top3[2] && (
+                            <div className="w-52 border border-white/15 bg-[#1A1A1F] px-4 pb-4 pt-6 text-center rounded-none">
+                                <div className="text-xs tracking-[0.3em] text-white/60">#03</div>
+                                <div className="mt-3 mx-auto h-20 w-20 border border-white/15 bg-black overflow-hidden rounded-none">
+                                    {top3[2].avatarDataUrl ? (
+                                        // eslint-disable-next-line @next/next/no-img-element
+                                        <img
+                                            src={top3[2].avatarDataUrl}
+                                            alt={top3[2].name}
+                                            className="h-full w-full object-cover"
+                                        />
+                                    ) : (
+                                        <div className="flex h-full w-full items-center justify-center text-2xl text-white/60">
+                                            {top3[2].name?.slice(0, 1)?.toUpperCase() ?? "?"}
+                                        </div>
+                                    )}
+                                </div>
+                                <div className="mt-3 text-sm text-white/80">{top3[2].name}</div>
+                                <div className="mt-2 font-mono text-lg text-white/90">{top3[2].score} pts</div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* CLASSEMENT COMPLET */}
+                    <div className="w-full max-w-3xl border border-white/15 bg-[#1A1A1F] p-6 rounded-none">
+                        <div className="flex items-center justify-between">
+                            <div className="text-xs tracking-[0.35em] text-white/60">CLASSEMENT COMPLET</div>
+                            <div className="text-[10px] tracking-[0.3em] text-white/40">
+                                {leaderboardWithAvatars.length} JOUEURS
+                            </div>
+                        </div>
+
+                        <div className="mt-4 space-y-2 max-h-[48vh] overflow-auto pr-1">
+                            {leaderboardWithAvatars.map((p: any, idx: number) => {
+                                const rank = idx + 1;
+                                const isFirst = rank === 1;
+                                const rankLabel = `#${rank.toString().padStart(2, "0")}`;
+
+                                return (
+                                    <div
+                                        key={p.id}
+                                        className={[
+                                            "flex items-center justify-between border px-3 py-2 rounded-none",
+                                            "bg-[#0E0E11] border-white/10",
+                                            isFirst ? "border-white/40" : "",
+                                        ].join(" ")}
+                                    >
+                                        <div className="flex items-center gap-3">
+                                            <div
+                                                className={[
+                                                    "min-w-[36px] text-sm font-mono",
+                                                    isFirst ? "font-bold text-white" : "text-white/70",
+                                                ].join(" ")}
+                                            >
+                                                {rankLabel}
+                                            </div>
+
+                                            <div className="h-8 w-8 border border-white/15 bg-black overflow-hidden rounded-none">
+                                                {p.avatarDataUrl ? (
+                                                    // eslint-disable-next-line @next/next/no-img-element
+                                                    <img
+                                                        src={p.avatarDataUrl}
+                                                        alt={p.name}
+                                                        className="h-full w-full object-cover"
+                                                    />
+                                                ) : (
+                                                    <div className="h-full w-full flex items-center justify-center text-[11px] text-white/50">
+                                                        {p.name?.slice(0, 1)?.toUpperCase() ?? "?"}
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            <div className="flex items-center gap-1">
+                        <span className={isFirst ? "font-semibold text-white" : "text-white/80"}>
+                          {p.name}
+                        </span>
+                                                {isFirst && <span className="text-xs">👑</span>}
+                                            </div>
+                                        </div>
+
+                                        <div
+                                            className={[
+                                                "font-mono text-sm",
+                                                isFirst ? "font-bold text-white" : "text-white/80",
+                                            ].join(" ")}
+                                        >
+                                            {p.score}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                </div>
+            </main>
+        );
+    }
+
+    // ============================================
+    // VUE LIVE HOST
+    // ============================================
     return (
         <main className="min-h-screen bg-[#0B0B10] text-white p-8">
             {/* TOP BAR */}
@@ -391,12 +607,24 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
                     </div>
                 </div>
 
-                <button
-                    onClick={startRound}
-                    className="border border-white/20 bg-[#F2F2F2] px-6 py-3 text-sm font-semibold tracking-wide text-black hover:bg-white"
-                >
-                    LANCER UNE MANCHE
-                </button>
+                {/* Boutons alignés en colonne pour ne pas décaler le centre */}
+                <div className="flex flex-col items-end gap-2">
+                    <button
+                        onClick={startRound}
+                        className="border border-white/20 bg-[#F2F2F2] px-6 py-3 text-sm font-semibold tracking-wide text-black hover:bg-white"
+                    >
+                        LANCER UNE MANCHE
+                    </button>
+
+                    {leaderboardWithAvatars.length > 0 && (
+                        <button
+                            onClick={() => setShowSummary(true)}
+                            className="border border-white/20 bg-[#0E0E11] px-4 py-2 text-[10px] font-semibold tracking-[0.25em] text-white hover:border-white/40"
+                        >
+                            ÉCRAN CLASSEMENT
+                        </button>
+                    )}
+                </div>
             </div>
 
             {error && <p className="mt-4 text-red-400">{error}</p>}
@@ -407,14 +635,18 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
                 <div className="col-span-3 space-y-6">
                     <div className="border border-white/15 bg-[#1A1A1F] p-5 rounded-none">
                         <div className="text-xs tracking-[0.35em] text-white/60">REJOINDRE</div>
-                        <div className="mt-3 flex items-start gap-4">
-                            <canvas ref={qrCanvasRef} className="border border-white/10 bg-white p-2 rounded-none" />
-                            <div className="min-w-0">
+                        <div className="mt-3 flex flex-col items-center gap-3">
+                            <canvas
+                                ref={qrCanvasRef}
+                                className="border border-white/10 bg-white p-2 rounded-none"
+                            />
+
+                            <div className="w-full">
                                 <div className="text-[10px] tracking-[0.35em] text-white/60">LIEN</div>
                                 <div className="mt-1 break-all font-mono text-xs text-white/80">{joinFullUrl}</div>
                                 <button
                                     onClick={() => navigator.clipboard.writeText(joinFullUrl)}
-                                    className="mt-3 border border-white/10 bg-[#0E0E11] px-3 py-2 text-sm rounded-none"
+                                    className="mt-3 w-full border border-white/10 bg-[#0E0E11] px-3 py-2 text-sm rounded-none"
                                 >
                                     Copier
                                 </button>
@@ -432,7 +664,10 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
 
                         <div className="mt-4 space-y-2 max-h-[48vh] overflow-auto pr-1">
                             {players.map((p) => (
-                                <div key={p.id} className="flex items-center gap-3 border border-white/10 bg-[#0E0E11] px-3 py-2 rounded-none">
+                                <div
+                                    key={p.id}
+                                    className="flex items-center gap-3 border border-white/10 bg-[#0E0E11] px-3 py-2 rounded-none"
+                                >
                                     <div className="h-10 w-10 overflow-hidden border border-white/10 bg-black rounded-none">
                                         {p.avatarDataUrl ? (
                                             // eslint-disable-next-line @next/next/no-img-element
@@ -496,12 +731,11 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
                             </>
                         )}
 
-                        {/* ✅ Visualiseur + lettre en fond */}
+                        {/* Visualiseur + lettre en fond */}
                         <div className="mt-8">
                             <div className="text-[10px] tracking-[0.35em] text-white/50">SPECTRE</div>
 
                             <div className="mt-3 h-[180px] w-full border border-white/10 bg-[#0E0E11] p-3 relative overflow-hidden rounded-none">
-                                {/* lettre en fond */}
                                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                                     <div className="font-mono text-[120px] leading-none tracking-[0.15em] text-white/10 select-none">
                                         {currentSegment}
@@ -516,19 +750,19 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
                             </div>
                         </div>
 
-                        {/* audio caché */}
                         <audio ref={audioRef} className="hidden" />
                     </div>
 
+                    {/* Résultat rapide de la dernière manche (optionnel) */}
                     {ended && (
                         <div className="border border-white/15 bg-[#1A1A1F] p-6 rounded-none">
-                            <div className="text-xs tracking-[0.35em] text-white/60">RÉSULTAT</div>
+                            <div className="text-xs tracking-[0.35em] text-white/60">RÉSULTAT MANCHE</div>
                             <div className="mt-2 text-xl">
                                 Bonne réponse : <b>{ended.correctLabel}</b>
                             </div>
 
                             <div className="mt-5">
-                                <div className="text-xs tracking-[0.35em] text-white/60">CLASSEMENT</div>
+                                <div className="text-xs tracking-[0.35em] text-white/60">TOP 10 MANCHE</div>
                                 <div className="mt-3 space-y-2">
                                     {ended.leaderboard?.slice(0, 10).map((p: any, idx: number) => (
                                         <div
@@ -547,8 +781,9 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
                     )}
                 </div>
 
-                {/* RIGHT: A/B/C/D columns */}
-                <div className="col-span-3">
+                {/* RIGHT: A/B/C/D + CLASSEMENT GLOBAL */}
+                <div className="col-span-3 space-y-6">
+                    {/* Bloc réponses */}
                     <div className="border border-white/15 bg-[#1A1A1F] p-5 rounded-none">
                         <div className="text-xs tracking-[0.35em] text-white/60">RÉPONSES</div>
 
@@ -578,6 +813,79 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
                             Astuce: tu peux relancer une nouvelle manche à tout moment.
                         </div>
                     </div>
+
+                    {/* Bloc classement global */}
+                    {leaderboardWithAvatars.length > 0 && (
+                        <div className="border border-white/15 bg-[#1A1A1F] p-5 rounded-none">
+                            <div className="flex items-center justify-between">
+                                <div className="text-xs tracking-[0.35em] text-white/60">CLASSEMENT</div>
+                                <div className="text-[10px] tracking-[0.3em] text-white/40">
+                                    TOP {Math.min(leaderboardWithAvatars.length, 6)}
+                                </div>
+                            </div>
+
+                            <div className="mt-4 space-y-2">
+                                {leaderboardWithAvatars.slice(0, 6).map((p: any, idx: number) => {
+                                    const rank = idx + 1;
+                                    const isFirst = rank === 1;
+                                    const rankLabel = `#${rank.toString().padStart(2, "0")}`;
+
+                                    return (
+                                        <div
+                                            key={p.id}
+                                            className={[
+                                                "flex items-center justify-between border px-3 py-2 rounded-none",
+                                                "bg-[#0E0E11] border-white/10",
+                                                isFirst ? "border-white/40" : "",
+                                            ].join(" ")}
+                                        >
+                                            <div className="flex items-center gap-3">
+                                                <div
+                                                    className={[
+                                                        "min-w-[36px] text-sm font-mono",
+                                                        isFirst ? "font-bold text-white" : "text-white/70",
+                                                    ].join(" ")}
+                                                >
+                                                    {rankLabel}
+                                                </div>
+
+                                                <div className="h-8 w-8 border border-white/15 bg-black overflow-hidden rounded-none">
+                                                    {p.avatarDataUrl ? (
+                                                        // eslint-disable-next-line @next/next/no-img-element
+                                                        <img
+                                                            src={p.avatarDataUrl}
+                                                            alt={p.name}
+                                                            className="h-full w-full object-cover"
+                                                        />
+                                                    ) : (
+                                                        <div className="h-full w-full flex items-center justify-center text-[11px] text-white/50">
+                                                            {p.name?.slice(0, 1)?.toUpperCase() ?? "?"}
+                                                        </div>
+                                                    )}
+                                                </div>
+
+                                                <div className="flex items-center gap-1">
+                          <span className={isFirst ? "font-semibold text-white" : "text-white/80"}>
+                            {p.name}
+                          </span>
+                                                    {isFirst && <span className="text-xs">👑</span>}
+                                                </div>
+                                            </div>
+
+                                            <div
+                                                className={[
+                                                    "font-mono text-sm",
+                                                    isFirst ? "font-bold text-white" : "text-white/80",
+                                                ].join(" ")}
+                                            >
+                                                {p.score}
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    )}
                 </div>
             </div>
         </main>

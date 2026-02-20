@@ -61,7 +61,11 @@ export async function POST(req: Request, { params }: { params: Promise<Params> }
     await redis.sadd(playersSetKey, playerId);
     await redis.expire(playersSetKey, ttlSeconds);
 
-    await pusherServer.trigger(`room-${code}`, "player-joined", playerObj);
+    await pusherServer.trigger(`room-${code}`, "player-joined", {
+        id: playerObj.id,
+        name: playerObj.name,
+        joinedAt: playerObj.joinedAt,
+    });
 
     return NextResponse.json({ playerId, name, code });
 }
