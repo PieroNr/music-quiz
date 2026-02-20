@@ -1,15 +1,14 @@
 import { NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
 import { pusherServer } from "@/lib/pusher-server";
-import { QUESTION_BANK } from "@/lib/question-bank";
+import { QUESTIONS } from "@/lib/question-bank"; // adapte le chemin si besoin
 
 type Params = { code: string };
 
-function makeId(len = 10) {
-    const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
-    let out = "";
-    for (let i = 0; i < len; i++) out += chars[Math.floor(Math.random() * chars.length)];
-    return out;
+function pickQuestion() {
+    // à adapter selon ta logique (random / séquence / index)
+    const idx = Math.floor(Math.random() * QUESTIONS.length);
+    return QUESTIONS[idx];
 }
 
 export async function POST(_req: Request, { params }: { params: Promise<Params> }) {
@@ -17,58 +16,57 @@ export async function POST(_req: Request, { params }: { params: Promise<Params> 
 
     const roomKey = `room:${code}`;
     const roomExists = await redis.exists(roomKey);
-    if (!roomExists) return NextResponse.json({ error: "Room expirée" }, { status: 404 });
+    if (!roomExists) {
+        return NextResponse.json({ error: "Room introuvable ou expirée" }, { status: 404 });
+    }
 
-    const ttl = await redis.ttl(roomKey);
-    const ttlSeconds = typeof ttl === "number" && ttl > 0 ? ttl : 60 * 60 * 2;
+    const question = pickQuestion();
 
-    const roundId = makeId();
-    const item = QUESTION_BANK[Math.floor(Math.random() * QUESTION_BANK.length)];
+    const now = Date.now();
+    const sequenceStartAt = now + 1000; // 1s de marge avant de démarrer l’écoute
 
-    const sequenceStartAt = Date.now();
+    // ✅ Durée totale de l’écoute (question + réponses + gaps)
+    const questionMs = question.questionDuration * 1000;
+    const optionsMs =
+        question.optionDurations && question.optionDurations.length === question.optionUrls.length
+            ? question.optionDurations.reduce((acc, v) => acc + v * 1000, 0)
+            : 0;
 
-    // ⚠️ Durées estimées (simple). Amélioration plus tard: durée réelle via metadata.
-    const questionDuration = 3000;
-    const optionDuration = 3000;
-    const gap = 3000; // pause entre chaque réponse
+    const gapsMs = (question.optionUrls.length - 1) * 3000; // 3s entre chaque réponse (A→B, B→C, C→D)
 
-    // question + (gap + option) * 4
-    const sequenceDuration = questionDuration + (gap + optionDuration) * 4;
+    const listeningTotalMs = questionMs + optionsMs + gapsMs;
 
-    const answerStartAt = sequenceStartAt + sequenceDuration;
-    const endsAt = answerStartAt + 10_000;
+    const answerStartAt = sequenceStartAt + listeningTotalMs; // ✅ le timer 10s commence après toute l’écoute
+    const answerWindowMs = 10_000;
+    const endsAt = answerStartAt + answerWindowMs;
 
-    const roundKey = `room:${code}:round:${roundId}`;
+    const roundId = `${code}-${now}`;
 
-    await redis.set(
-        roundKey,
-        {
-            roundId,
-            difficulty: item.difficulty,
-            questionUrl: item.questionUrl,
-            optionUrls: item.optionUrls,
-            correctIndex: item.correctIndex, // serveur only
-            sequenceStartAt,
-            answerStartAt,
-            endsAt,
-            createdAt: Date.now(),
-        },
-        { ex: ttlSeconds }
-    );
-
-    await redis.set(`room:${code}:currentRound`, { roundId }, { ex: ttlSeconds });
-
-    const payload = {
+    const roundPayload = {
         roundId,
-        difficulty: item.difficulty,
-        questionUrl: item.questionUrl,
-        optionUrls: item.optionUrls,
+        difficulty: question.difficulty,
+        questionUrl: question.questionUrl,
+        optionUrls: question.optionUrls,
+        answerUrl: question.answerUrl,
         sequenceStartAt,
         answerStartAt,
         endsAt,
     };
 
-    await pusherServer.trigger(`room-${code}`, "round-started", payload);
+    // On stocke la manche en cours pour /round/end
+    const roundKey = `room:${code}:round:${roundId}`;
+    await redis.set(
+        roundKey,
+        {
+            ...roundPayload,
+            correctIndex: question.correctIndex,
+            createdAt: now,
+        },
+        { ex: 60 * 60 }
+    );
 
-    return NextResponse.json(payload);
+    // Temps réel pour host + joueurs
+    await pusherServer.trigger(`room-${code}`, "round-started", roundPayload);
+
+    return NextResponse.json(roundPayload);
 }

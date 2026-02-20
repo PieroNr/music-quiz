@@ -8,6 +8,7 @@ type RoundPayload = {
     difficulty: 1 | 2 | 3;
     questionUrl: string;
     optionUrls: string[];
+    answerUrl: string;        // ✅ nouvel audio de réponse
     sequenceStartAt: number;
     answerStartAt: number;
     endsAt: number;

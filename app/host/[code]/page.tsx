@@ -11,6 +11,7 @@ type RoundPayload = {
     difficulty: 1 | 2 | 3;
     questionUrl: string;
     optionUrls: string[];
+    answerUrl: string;        // ✅ nouvel audio de réponse
     sequenceStartAt: number;
     answerStartAt: number;
     endsAt: number;
@@ -46,7 +47,7 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
     const isDrawingRef = useRef(false);
 
     // lettre affichée derrière le spectre (Q / A / B / C / D / —)
-    const [currentSegment, setCurrentSegment] = useState<"—" | "Q" | "A" | "B" | "C" | "D">("—");
+    const [currentSegment, setCurrentSegment] = useState<"—" | "GUESS" | "A" | "B" | "C" | "D">("—");
 
     // écran de fin de partie
     const [showSummary, setShowSummary] = useState(false);
@@ -249,7 +250,7 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
     }, [code]);
 
     // audio helpers
-    async function playUrl(url: string, segment: "Q" | "A" | "B" | "C" | "D") {
+    async function playUrl(url: string, segment: "GUESS" | "A" | "B" | "C" | "D") {
         const el = audioRef.current;
         if (!el) return;
 
@@ -280,7 +281,7 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
 
     async function playSequence(questionUrl: string, optionUrls: string[]) {
         // question
-        await playUrl(questionUrl, "Q");
+        await playUrl(questionUrl, "GUESS");
 
         // A/B/C/D, chaque réponse séparée par 3s
         const labels: Array<"A" | "B" | "C" | "D"> = ["A", "B", "C", "D"];
@@ -315,18 +316,24 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
     }
 
     // end round (host action + auto)
-    async function endRound(roundId: string) {
-        if (!code) return;
+    async function endRoundAndReveal() {
+        if (!code || !round) return;
         try {
             const res = await fetch(`/api/room/${code}/round/end`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ roundId }),
+                body: JSON.stringify({ roundId: round.roundId }),
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data?.error ?? "Erreur end round");
+
             setEnded(data);
             setCurrentSegment("—");
+
+            // ✅ après calcul du résultat, on joue l'audio de réponse sur l'host
+            if (round.answerUrl) {
+                await playUrl(round.answerUrl, "GUESS"); // (ou "A" / "B"… si tu veux changer la lettre du spectre)
+            }
         } catch (e) {
             setError(e instanceof Error ? e.message : "Erreur inconnue");
         }
@@ -337,8 +344,8 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
         if (!round) return;
         if (ended) return;
         if (now < round.endsAt) return;
-        endRound(round.roundId).catch(() => {});
-        // eslint-disable-next-line react-hooks/exhaustive-deps
+
+        endRoundAndReveal().catch(() => {});
     }, [now, round, ended]);
 
     // cleanup on unmount
@@ -722,7 +729,7 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
                                 <div className="mt-5 text-6xl font-mono tracking-widest text-white/80">00</div>
                                 {!ended && (
                                     <button
-                                        onClick={() => endRound(round.roundId)}
+                                        onClick={() => endRoundAndReveal()}
                                         className="mt-5 border border-white/10 bg-[#0E0E11] px-5 py-3 rounded-none"
                                     >
                                         Calculer résultat
