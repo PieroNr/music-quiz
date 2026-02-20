@@ -26,7 +26,7 @@ export async function POST(_req: Request, { params }: { params: Promise<Params> 
     const sequenceStartAt = now + 1000; // 1s de marge avant de démarrer l’écoute
 
     // ✅ Durée totale de l’écoute (question + réponses + gaps)
-    const questionMs = question.questionDuration * 1000;
+    const questionMs = question.questionDuration * 1000 + 3000;
     const optionsMs =
         question.optionDurations && question.optionDurations.length === question.optionUrls.length
             ? question.optionDurations.reduce((acc, v) => acc + v * 1000, 0)
