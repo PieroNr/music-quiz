@@ -89,16 +89,18 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
         const audioEl = audioRef.current;
         if (!audioEl) return;
 
-        if (!audioCtxRef.current) {
+        // (re)créer l'AudioContext si besoin
+        if (!audioCtxRef.current || audioCtxRef.current.state === "closed") {
             const Ctx = window.AudioContext || (window as any).webkitAudioContext;
             audioCtxRef.current = new Ctx();
         }
-        const ctx = audioCtxRef.current;
+        const ctx = audioCtxRef.current!;
 
         if (ctx.state === "suspended") {
             ctx.resume().catch(() => {});
         }
 
+        // Créer / reconfigurer l'analyser
         if (!analyserRef.current) {
             const analyser = ctx.createAnalyser();
             analyser.fftSize = 2048;
@@ -106,10 +108,29 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
             analyserRef.current = analyser;
         }
 
-        if (!srcNodeRef.current) {
-            srcNodeRef.current = ctx.createMediaElementSource(audioEl);
-            srcNodeRef.current.connect(analyserRef.current!);
+        // Si la source actuelle n'existe pas ou n'est plus branchée sur CE <audio>,
+        // on la recrée proprement
+        const needsNewSource =
+            !srcNodeRef.current || (srcNodeRef.current as any).mediaElement !== audioEl;
+
+        if (needsNewSource) {
+            try {
+                srcNodeRef.current?.disconnect();
+            } catch {
+                // ignore
+            }
+
+            const src = ctx.createMediaElementSource(audioEl);
+            src.connect(analyserRef.current!);
             analyserRef.current!.connect(ctx.destination);
+            srcNodeRef.current = src;
+        } else {
+            // on s'assure que l'analyser est bien connecté au destination
+            try {
+                analyserRef.current!.connect(ctx.destination);
+            } catch {
+                // ignore si déjà connecté
+            }
         }
     }
 
