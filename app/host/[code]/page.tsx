@@ -520,7 +520,7 @@ export default function HostRoomPage({ params }: { params: Promise<{ code: strin
                         {/* Titre */}
                         <div className="text-center">
                             <div className="text-[10px] tracking-[0.35em] text-white/50">PODIUM</div>
-                            <div className="mt-2 text-4xl font-semibold tracking-[0.2em]">MUSIQUE QUIZ</div>
+                            <div className="mt-2 text-4xl font-semibold tracking-[0.2em]">QUESS THE DROP!</div>
                         </div>
 
                         {/* PODIUM 1 / 2 / 3 */}
