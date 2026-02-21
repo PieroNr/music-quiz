@@ -5,29 +5,21 @@ import { QUESTIONS } from "@/lib/question-bank";
 
 type Params = { code: string };
 
-// 🔁 Sélectionne la prochaine question de la room, dans l'ordre du tableau QUESTIONS
+// Sélectionne la question suivante pour la room, dans l'ordre du tableau QUESTIONS
 async function pickNextQuestionForRoom(code: string) {
     const idxKey = `room:${code}:questionIndex`;
-    const raw = await redis.get(idxKey);
 
-    let idx = 0;
-    if (typeof raw === "string") {
-        const parsed = parseInt(raw, 10);
-        if (!Number.isNaN(parsed)) idx = parsed;
-    }
+    // INCR est atomique : 1er appel => 1, 2e => 2, etc.
+    const current = await redis.incr(idxKey);
+    const idx = current - 1; // on convertit en index 0-based
 
     if (idx >= QUESTIONS.length) {
         // plus de questions disponibles
-        return { question: null, nextIndex: idx };
+        return { question: null, idx };
     }
 
     const question = QUESTIONS[idx];
-    const nextIndex = idx + 1;
-
-    // on enregistre le prochain index pour la future manche
-    await redis.set(idxKey, String(nextIndex));
-
-    return { question, nextIndex };
+    return { question, idx };
 }
 
 export async function POST(_req: Request, { params }: { params: Promise<Params> }) {
@@ -53,7 +45,7 @@ export async function POST(_req: Request, { params }: { params: Promise<Params> 
     const now = Date.now();
     const sequenceStartAt = now + 1000; // 1s de marge avant de démarrer l’écoute
 
-    // ⏱ calcul dynamique des durées (comme on l’a fait juste avant)
+    // ⏱ calcul dynamique des durées (question + réponses + gaps)
     const questionMs = question.questionDuration * 1000;
     const optionsMs =
         question.optionDurations && question.optionDurations.length === question.optionUrls.length
